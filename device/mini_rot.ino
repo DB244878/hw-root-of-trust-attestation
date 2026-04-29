@@ -1,4 +1,6 @@
-String firmware = "firmware_v1";
+String firmware = "firmware_v2";
+int svn = 2;
+
 String deviceSecret = "device_secret_123";
 
 String hashStr(String s) {
@@ -34,7 +36,7 @@ void setup() {
 
   boot_rom();
 
-  Serial.println("=== Mini Caliptra v1 ===");
+  Serial.println("=== Mini Caliptra v2 ===");
   Serial.println("Device boot complete");
   Serial.println("Type: get_ids, measure, attest");
 }
@@ -51,13 +53,15 @@ void loop() {
     }
     else if (cmd == "measure") {
       Serial.println("MEASURE=" + hashStr(firmware));
+      Serial.println("SVN=" + String(svn));
     }
     else if (cmd == "attest") {
       String measurement = hashStr(firmware);
-      String signature = hashStr(runtime_id + "|" + measurement);
+      String signature = hashStr(runtime_id + "|" + measurement + "|" + String(svn));
 
       Serial.println("ATTESTATION");
       Serial.println("MEASURE=" + measurement);
+      Serial.println("SVN=" + String(svn));
       Serial.println("SIG=" + signature);
     }
     else {
