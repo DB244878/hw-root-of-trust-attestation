@@ -45,6 +45,9 @@ Models:
 
 ### 2. Verifier (Cloud Control Plane)
 
+Trust decisions are computed dynamically using attestation verification logic.
+Nodes are quarantined automatically based on policy violations.
+
 Implemented in Python.
 
 Responsibilities:
