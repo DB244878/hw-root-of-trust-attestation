@@ -1,111 +1,52 @@
-from flask import Flask, jsonify
+from dataclasses import dataclass
+from enum import Enum
 
-app = Flask(__name__)
+class TrustState(str, Enum):
+    TRUSTED_HARDWARE = "TRUSTED_HARDWARE_BACKED_NODE"
+    TRUSTED_SIM = "TRUSTED_SIMULATION_ONLY"
+    QUARANTINED = "QUARANTINED"
 
-EXPECTED_MEASURE = "161061760"  # firmware_v2
-MIN_ALLOWED_SVN = 2
+@dataclass
+class Node:
+    node_id: str
+    trust_state: TrustState
+    workload: str | None = None
 
+class MiniControlPlane:
+    def __init__(self):
+        self.nodes = {
+            "node-a-esp32-atecc608a": Node("node-a-esp32-atecc608a", TrustState.TRUSTED_HARDWARE),
+            "node-b-simulated": Node("node-b-simulated", TrustState.TRUSTED_SIM),
+            "node-c-quarantined": Node("node-c-quarantined", TrustState.QUARANTINED),
+        }
 
-def hash_str(s):
-    h = 0
-    for ch in s:
-        h = h * 31 + ord(ch)
-        h = ((h + 2**31) % 2**32) - 2**31
-    return str(h)
+    def create_bare_metal_instance(self, workload_name: str) -> str:
+        for node in self.nodes.values():
+            if node.trust_state == TrustState.TRUSTED_HARDWARE and node.workload is None:
+                node.workload = workload_name
+                return f"BARE_METAL_INSTANCE_CREATED: {workload_name} on {node.node_id}"
 
+        return "NO_TRUSTED_HARDWARE_NODE_AVAILABLE"
 
-def derive(parent, measurement):
-    return hash_str(parent + "|" + measurement)
+    def create_virtual_instance(self, workload_name: str) -> str:
+        for node in self.nodes.values():
+            if node.trust_state in [TrustState.TRUSTED_HARDWARE, TrustState.TRUSTED_SIM] and node.workload is None:
+                node.workload = workload_name
+                return f"VIRTUAL_INSTANCE_CREATED: {workload_name} on {node.node_id}"
 
+        return "NO_TRUSTED_NODE_AVAILABLE"
 
-def build_node_evidence(node_id, firmware, svn, device_secret):
-    measurement = hash_str(firmware)
+    def show_nodes(self):
+        print("=== Mini Control Plane Node State ===")
+        for node in self.nodes.values():
+            print(f"{node.node_id}: trust={node.trust_state.value}, workload={node.workload}")
 
-    idev = derive(device_secret, measurement)
-    ldev = derive(idev, hash_str("config_v1"))
-    runtime_id = derive(ldev, hash_str("runtime_v1"))
-
-    signature = hash_str(runtime_id + "|" + measurement + "|" + str(svn))
-
-    return {
-        "id": node_id,
-        "firmware": firmware,
-        "svn": svn,
-        "measurement": measurement,
-        "runtime_id": runtime_id,
-        "signature": signature,
-    }
-
-
-def verify_node(node):
-    expected_signature = hash_str(
-        node["runtime_id"] + "|" + node["measurement"] + "|" + str(node["svn"])
-    )
-
-    reasons = []
-
-    if node["signature"] != expected_signature:
-        reasons.append("INVALID_SIGNATURE")
-
-    if node["measurement"] != EXPECTED_MEASURE:
-        reasons.append("UNTRUSTED_FIRMWARE")
-
-    if node["svn"] < MIN_ALLOWED_SVN:
-        reasons.append("ROLLBACK_DETECTED")
-
-    trusted = len(reasons) == 0
-
-    return {
-        **node,
-        "trusted": trusted,
-        "reasons": reasons,
-    }
-
-
-raw_nodes = [
-    build_node_evidence("rack1-node01", "firmware_v2", 2, "device_secret_1"),
-    build_node_evidence("rack1-node02", "firmware_v2", 2, "device_secret_2"),
-    build_node_evidence("rack1-node03", "firmware_v1", 1, "device_secret_3"),
-    build_node_evidence("rack1-node04", "firmware_hacked", 0, "device_secret_4"),
-]
-
-
-@app.route("/nodes", methods=["GET"])
-def get_nodes():
-    verified_nodes = [verify_node(n) for n in raw_nodes]
-    return jsonify(verified_nodes)
-
-
-@app.route("/launch", methods=["POST"])
-def launch():
-    verified_nodes = [verify_node(n) for n in raw_nodes]
-    trusted_nodes = [n for n in verified_nodes if n["trusted"]]
-
-    if not trusted_nodes:
-        return jsonify({
-            "status": "DENY",
-            "reason": "No trusted nodes available",
-            "quarantined": [
-                {"id": n["id"], "reasons": n["reasons"]}
-                for n in verified_nodes
-                if not n["trusted"]
-            ],
-        })
-
-    selected = trusted_nodes[0]
-
-    return jsonify({
-        "status": "ALLOW",
-        "selected_node": selected["id"],
-        "message": "Instance launched on trusted node",
-        "trusted_nodes": [n["id"] for n in trusted_nodes],
-        "quarantined_nodes": [
-            {"id": n["id"], "reasons": n["reasons"]}
-            for n in verified_nodes
-            if not n["trusted"]
-        ],
-    })
-
+def main():
+    cp = MiniControlPlane()
+    cp.show_nodes()
+    print(cp.create_bare_metal_instance("tenant-baremetal-demo"))
+    print(cp.create_virtual_instance("tenant-vm-demo"))
+    cp.show_nodes()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=5000)
+    main()
