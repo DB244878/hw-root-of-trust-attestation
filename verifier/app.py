@@ -1,25 +1,27 @@
 from fastapi import FastAPI
 from pydantic import BaseModel
-from datetime import datetime
 import uuid
+
+from db import (
+    init_db,
+    register_device,
+    get_device,
+    update_device_status,
+    get_all_devices
+)
 
 app = FastAPI(
     title="Cloud Fleet Attestation Verifier",
-    description="Phase 2 verifier API for hardware root-of-trust attestation lab",
-    version="0.1.0"
+    description="SQLite-backed verifier API for hardware root-of-trust attestation lab",
+    version="0.2.0"
 )
 
-devices = {
-    "esp32-test-01": {
-        "device_id": "esp32-test-01",
-        "expected_firmware_hash": "firmware_v1_hash",
-        "status": "registered",
-        "last_seen": None,
-        "reason": "Device registered but not yet attested"
-    }
-}
-
 challenges = {}
+
+class RegisterDeviceRequest(BaseModel):
+    device_id: str
+    expected_firmware_hash: str
+    min_firmware_version: int
 
 class ChallengeRequest(BaseModel):
     device_id: str
@@ -31,16 +33,44 @@ class AttestationRequest(BaseModel):
     firmware_version: int
     signature: str
 
+@app.on_event("startup")
+def startup():
+    init_db()
+
 @app.get("/")
 def root():
     return {
         "service": "Cloud Fleet Attestation Verifier",
         "status": "running",
-        "version": "0.1.0"
+        "version": "0.2.0",
+        "storage": "sqlite"
+    }
+
+@app.post("/register_device")
+def register(request: RegisterDeviceRequest):
+    register_device(
+        request.device_id,
+        request.expected_firmware_hash,
+        request.min_firmware_version
+    )
+
+    return {
+        "device_id": request.device_id,
+        "status": "registered",
+        "message": "Device registered in fleet database"
     }
 
 @app.post("/challenge")
 def create_challenge(request: ChallengeRequest):
+    device = get_device(request.device_id)
+
+    if device is None:
+        return {
+            "device_id": request.device_id,
+            "status": "rejected",
+            "reason": "Unknown device. Register device first."
+        }
+
     nonce = str(uuid.uuid4())
     challenges[request.device_id] = nonce
 
@@ -53,7 +83,7 @@ def create_challenge(request: ChallengeRequest):
 @app.post("/attest")
 def attest(request: AttestationRequest):
     expected_nonce = challenges.get(request.device_id)
-    device = devices.get(request.device_id)
+    device = get_device(request.device_id)
 
     if device is None:
         return {
@@ -63,24 +93,29 @@ def attest(request: AttestationRequest):
         }
 
     if expected_nonce != request.nonce:
-        device["status"] = "quarantined"
-        device["reason"] = "Invalid or missing nonce"
+        status = "quarantined"
+        reason = "Invalid or missing nonce"
+    elif request.firmware_version < device["min_firmware_version"]:
+        status = "quarantined"
+        reason = "Rollback detected"
     elif request.firmware_hash != device["expected_firmware_hash"]:
-        device["status"] = "quarantined"
-        device["reason"] = "Firmware hash mismatch"
+        status = "quarantined"
+        reason = "Firmware hash mismatch"
     else:
-        device["status"] = "trusted"
-        device["reason"] = "Nonce and firmware hash matched"
+        status = "trusted"
+        reason = "Nonce, firmware hash, and firmware version matched policy"
 
-    device["last_seen"] = datetime.utcnow().isoformat()
+    update_device_status(request.device_id, status, reason)
+
+    updated_device = get_device(request.device_id)
 
     return {
         "device_id": request.device_id,
-        "status": device["status"],
-        "reason": device["reason"],
-        "last_seen": device["last_seen"]
+        "status": updated_device["status"],
+        "reason": updated_device["reason"],
+        "last_seen": updated_device["last_seen"]
     }
 
 @app.get("/devices")
-def get_devices():
-    return devices
+def devices():
+    return get_all_devices()
