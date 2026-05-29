@@ -12,3 +12,4 @@ venv/
 *.elf
 *.bin
 build/
+verifier/devices.db
