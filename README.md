@@ -83,40 +83,41 @@ Future versions will add:
 
 ## Current Architecture
 
+```text
 +-----------------------------+
 | Device                      |
 | ESP32 + ATECC608A           |
 +-------------+---------------+
-|
-|
-v
+              |
+              |
+              v
 +-----------------------------+
 | Challenge API               |
 | Generates Nonce             |
 +-------------+---------------+
-|
-|
-v
+              |
+              |
+              v
 +-----------------------------+
 | Attestation API             |
 | Receives Evidence           |
 +-------------+---------------+
-|
-|
-v
+              |
+              |
+              v
 +-----------------------------+
 | Policy Engine               |
 | Firmware Validation         |
 | Trust Decisions             |
 +-------------+---------------+
-|
-|
-v
+              |
+              |
+              v
 +-----------------------------+
 | Trusted / Quarantined       |
 +-----------------------------+
+```
 
----
 
 ## Roadmap
 
