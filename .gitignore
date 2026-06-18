@@ -13,3 +13,6 @@ venv/
 *.bin
 build/
 verifier/devices.db
+
+# Local runtime databases
+verifier/platforms.db
