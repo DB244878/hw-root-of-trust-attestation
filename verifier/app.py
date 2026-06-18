@@ -12,6 +12,7 @@ from db import (
 
 from platform_registry import PlatformRegistry
 from component_types import REQUIRED_PLATFORM_COMPONENTS
+from fleet_admission_controller import evaluate_platform_admission
 
 app = FastAPI(
     title="Secure Hardware Fleet Verifier",
@@ -243,3 +244,14 @@ def get_missing_components(platform_id: str):
         "missing_components": missing_components,
         "ready_for_platform_admission_evaluation": len(missing_components) == 0,
     }
+
+@app.get("/fleet/admission/{platform_id}")
+def get_fleet_admission(platform_id: str):
+    platform = platform_registry.get_platform(platform_id)
+
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Unknown platform_id")
+
+    components = platform_registry.get_components_for_platform(platform_id)
+    return evaluate_platform_admission(platform_id, components)
+
