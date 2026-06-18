@@ -1,4 +1,4 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uuid
 
@@ -7,24 +7,31 @@ from db import (
     register_device,
     get_device,
     update_device_status,
-    get_all_devices
+    get_all_devices,
 )
 
+from platform_registry import PlatformRegistry
+from component_types import REQUIRED_PLATFORM_COMPONENTS
+
 app = FastAPI(
-    title="Cloud Fleet Attestation Verifier",
-    description="SQLite-backed verifier API for hardware root-of-trust attestation lab",
-    version="0.2.0"
+    title="Secure Hardware Fleet Verifier",
+    description="Verifier API for hardware root-of-trust attestation and platform-level fleet security modeling",
+    version="0.3.0",
 )
 
 challenges = {}
+platform_registry = PlatformRegistry()
+
 
 class RegisterDeviceRequest(BaseModel):
     device_id: str
     expected_firmware_hash: str
     min_firmware_version: int
 
+
 class ChallengeRequest(BaseModel):
     device_id: str
+
 
 class AttestationRequest(BaseModel):
     device_id: str
@@ -33,32 +40,61 @@ class AttestationRequest(BaseModel):
     firmware_version: int
     signature: str
 
+
+class RegisterPlatformRequest(BaseModel):
+    platform_id: str
+    platform_type: str
+    location: str
+    owner: str
+
+
+class RegisterComponentRequest(BaseModel):
+    platform_id: str
+    component_id: str
+    component_type: str
+    supplier: str
+    expected_firmware_hash: str
+    min_firmware_version: int
+
+
 @app.on_event("startup")
 def startup():
     init_db()
 
+
 @app.get("/")
 def root():
     return {
-        "service": "Cloud Fleet Attestation Verifier",
+        "service": "Secure Hardware Fleet Verifier",
         "status": "running",
-        "version": "0.2.0",
-        "storage": "sqlite"
+        "version": "0.3.0",
+        "storage": "sqlite_for_device_attestation_in_memory_for_platform_registry",
+        "capabilities": [
+            "device_registration",
+            "challenge_response_attestation",
+            "firmware_hash_validation",
+            "rollback_detection",
+            "platform_registration",
+            "component_registration",
+            "missing_required_component_detection",
+        ],
     }
+
 
 @app.post("/register_device")
 def register(request: RegisterDeviceRequest):
     register_device(
         request.device_id,
         request.expected_firmware_hash,
-        request.min_firmware_version
+        request.min_firmware_version,
     )
 
     return {
         "device_id": request.device_id,
         "status": "registered",
-        "message": "Device registered in fleet database"
+        "message": "Device registered in fleet database",
     }
+
 
 @app.post("/challenge")
 def create_challenge(request: ChallengeRequest):
@@ -68,7 +104,7 @@ def create_challenge(request: ChallengeRequest):
         return {
             "device_id": request.device_id,
             "status": "rejected",
-            "reason": "Unknown device. Register device first."
+            "reason": "Unknown device. Register device first.",
         }
 
     nonce = str(uuid.uuid4())
@@ -77,8 +113,9 @@ def create_challenge(request: ChallengeRequest):
     return {
         "device_id": request.device_id,
         "nonce": nonce,
-        "message": "Challenge created"
+        "message": "Challenge created",
     }
+
 
 @app.post("/attest")
 def attest(request: AttestationRequest):
@@ -89,7 +126,7 @@ def attest(request: AttestationRequest):
         return {
             "device_id": request.device_id,
             "status": "quarantined",
-            "reason": "Unknown device"
+            "reason": "Unknown device",
         }
 
     if expected_nonce != request.nonce:
@@ -113,9 +150,96 @@ def attest(request: AttestationRequest):
         "device_id": request.device_id,
         "status": updated_device["status"],
         "reason": updated_device["reason"],
-        "last_seen": updated_device["last_seen"]
+        "last_seen": updated_device["last_seen"],
     }
+
 
 @app.get("/devices")
 def devices():
     return get_all_devices()
+
+
+@app.post("/platform/register")
+def register_platform(request: RegisterPlatformRequest):
+    platform = platform_registry.register_platform(
+        platform_id=request.platform_id,
+        platform_type=request.platform_type,
+        location=request.location,
+        owner=request.owner,
+    )
+
+    return {
+        "status": "registered",
+        "platform": platform,
+        "message": "Platform registered for secure fleet admission modeling",
+    }
+
+
+@app.get("/platform/{platform_id}")
+def get_platform(platform_id: str):
+    platform = platform_registry.get_platform(platform_id)
+
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Unknown platform_id")
+
+    return platform
+
+
+@app.post("/component/register")
+def register_component(request: RegisterComponentRequest):
+    if request.component_type not in REQUIRED_PLATFORM_COMPONENTS:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": "Unsupported component_type",
+                "allowed_component_types": REQUIRED_PLATFORM_COMPONENTS,
+            },
+        )
+
+    try:
+        component = platform_registry.register_component(
+            platform_id=request.platform_id,
+            component_id=request.component_id,
+            component_type=request.component_type,
+            supplier=request.supplier,
+            expected_firmware_hash=request.expected_firmware_hash,
+            min_firmware_version=request.min_firmware_version,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+    return {
+        "status": "registered",
+        "component": component,
+        "message": "Component registered under platform",
+    }
+
+
+@app.get("/platform/{platform_id}/components")
+def get_platform_components(platform_id: str):
+    platform = platform_registry.get_platform(platform_id)
+
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Unknown platform_id")
+
+    return {
+        "platform_id": platform_id,
+        "components": platform_registry.get_components_for_platform(platform_id),
+    }
+
+
+@app.get("/platform/{platform_id}/missing-components")
+def get_missing_components(platform_id: str):
+    platform = platform_registry.get_platform(platform_id)
+
+    if platform is None:
+        raise HTTPException(status_code=404, detail="Unknown platform_id")
+
+    missing_components = platform_registry.get_missing_required_components(platform_id)
+
+    return {
+        "platform_id": platform_id,
+        "required_components": REQUIRED_PLATFORM_COMPONENTS,
+        "missing_components": missing_components,
+        "ready_for_platform_admission_evaluation": len(missing_components) == 0,
+    }
