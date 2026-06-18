@@ -77,6 +77,22 @@ class PlatformRegistry:
         self.components[component_id] = component
         return asdict(component)
 
+
+    def update_component_status(
+        self,
+        component_id: str,
+        status: str,
+        reason: str,
+    ) -> Optional[dict]:
+        component = self.components.get(component_id)
+
+        if component is None:
+            return None
+
+        component.status = status
+        component.reason = reason
+        return asdict(component)
+
     def get_platform(self, platform_id: str) -> Optional[dict]:
         platform = self.platforms.get(platform_id)
         if platform is None:
