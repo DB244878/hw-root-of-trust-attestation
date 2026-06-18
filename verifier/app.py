@@ -58,6 +58,12 @@ class RegisterComponentRequest(BaseModel):
     min_firmware_version: int
 
 
+class UpdateComponentStatusRequest(BaseModel):
+    component_id: str
+    status: str
+    reason: str
+
+
 @app.on_event("startup")
 def startup():
     init_db()
@@ -254,4 +260,27 @@ def get_fleet_admission(platform_id: str):
 
     components = platform_registry.get_components_for_platform(platform_id)
     return evaluate_platform_admission(platform_id, components)
+
+@app.post("/component/status")
+def update_component_status(request: UpdateComponentStatusRequest):
+    if request.status not in ["registered", "trusted", "quarantined"]:
+        raise HTTPException(
+            status_code=400,
+            detail="status must be one of: registered, trusted, quarantined",
+        )
+
+    component = platform_registry.update_component_status(
+        component_id=request.component_id,
+        status=request.status,
+        reason=request.reason,
+    )
+
+    if component is None:
+        raise HTTPException(status_code=404, detail="Unknown component_id")
+
+    return {
+        "status": "updated",
+        "component": component,
+        "message": "Component trust state updated",
+    }
 
